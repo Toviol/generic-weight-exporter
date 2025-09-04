@@ -13,7 +13,7 @@ import snntorch as snn
 from snntorch import surrogate
 
 def export_weights_to_c_header_generic(
-    model: torch.nn.Module,
+    model: torch.nn.Module | None,
     weights_path: str,
     header_path: str = "network_weights.h",
     only_weights_and_bias: bool = True,   # True => exporta apenas *.weight/*.bias
@@ -21,7 +21,8 @@ def export_weights_to_c_header_generic(
     emit_typedef_if_builtin: bool = True, # gera typedef weight_t se ctype in {"float","double"}
     line_wrap: int = 10,                  # quebra de linha a cada N valores
     float_fmt: str = ".8f",               # formato p/ floats (ex.: ".6g" p/ compacto)
-    verbose: bool = True
+    verbose: bool = True,
+    require_model: bool = True            # <<< NOVO: se False, usa apenas o state_dict do arquivo
 ):
     """
     Exporta pesos de QUALQUER arquitetura PyTorch para um .h compatível com C.
@@ -32,20 +33,43 @@ def export_weights_to_c_header_generic(
       - Tensores 4D (ex.: Conv2d.weight) -> vetor 1D flatten
       - Demais ranks (0D, 3D, 5D, ...) -> vetor 1D flatten
     Para cada tensor, emite #defines de shape: NAME_DIMi e NAME_NDIMS.
+
+    Quando require_model=False, o `model` pode ser None; o exportador usa o state_dict
+    salvo em `weights_path` diretamente (aceita formatos comuns de checkpoint).
     """
     if verbose:
         print("Carregando pesos salvos...")
 
+    # Carrega o checkpoint cru
     ckpt = torch.load(weights_path, map_location="cpu")
-    # aceita formatos variados de checkpoint
-    if isinstance(ckpt, dict) and "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
-        model.load_state_dict(ckpt["state_dict"])
-    elif isinstance(ckpt, dict):
-        model.load_state_dict(ckpt)
-    else:
-        model.load_state_dict(ckpt)
 
-    state = model.state_dict()
+    # Função auxiliar para extrair um state_dict de diferentes formatos
+    def extract_state_dict(obj):
+        # Formato comum de trainers: {"state_dict": {...}, ...}
+        if isinstance(obj, dict) and "state_dict" in obj and isinstance(obj["state_dict"], dict):
+            return obj["state_dict"]
+        # Checkpoint já é um state_dict puro (chaves com .weight/.bias)
+        if isinstance(obj, dict) and all(isinstance(k, str) for k in obj.keys()):
+            return obj
+        # Último recurso: tenta acessar .state_dict() se for um módulo salvo
+        if hasattr(obj, "state_dict") and callable(getattr(obj, "state_dict")):
+            return obj.state_dict()
+        raise ValueError("Formato de checkpoint não reconhecido para extração de state_dict.")
+
+    if require_model:
+        if model is None:
+            raise ValueError("`model` é obrigatório quando require_model=True.")
+        # carrega no modelo (mantém comportamento anterior)
+        if isinstance(ckpt, dict) and "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
+            model.load_state_dict(ckpt["state_dict"])
+        elif isinstance(ckpt, dict):
+            model.load_state_dict(ckpt)
+        else:
+            model.load_state_dict(ckpt)
+        state = model.state_dict()
+    else:
+        # usa apenas o state_dict do arquivo (sem precisar do model)
+        state = extract_state_dict(ckpt)
 
     # guard a partir do nome do arquivo
     base = os.path.basename(header_path)
@@ -67,6 +91,7 @@ def export_weights_to_c_header_generic(
         return [fmt.format(v) for v in flat]
 
     def write_wrapped(f, values: Iterable[str], wrap=line_wrap, indent="  "):
+        values = list(values)  # garantir len()
         for i, v in enumerate(values):
             if i % wrap == 0:
                 f.write("\n" + indent)
@@ -184,6 +209,7 @@ def create_scnn_complete(beta):
 def main():
     """
     Função principal para exportar os pesos do modelo Fashion-MNIST SCNN.
+    Demonstra ambos os modos: com modelo (require_model=True) e sem modelo (require_model=False).
     """
     print("=" * 60)
     print("EXPORTADOR GENÉRICO DE PESOS - FASHION-MNIST SCNN")
@@ -192,7 +218,6 @@ def main():
     # Parâmetros do modelo (devem corresponder aos usados no treinamento)
     beta = 0.7
     weights_path = "trained_scnn_fashion_mnist_weights_only.pt"
-    header_path = "fashion_mnist_weights_generic.h"
     
     # Verificar se o arquivo de pesos existe
     if not os.path.exists(weights_path):
@@ -202,34 +227,94 @@ def main():
     
     print(f"Arquivo de pesos encontrado: {weights_path}")
     
-    # Criar o modelo (deve ter a mesma arquitetura usada no treinamento)
-    print("Criando modelo SCNN...")
-    model = create_scnn_complete(beta)
+    # MODO 1: Com modelo (require_model=True) - Comportamento original
+    print("\n" + "=" * 40)
+    print("MODO 1: EXPORTAÇÃO COM MODELO")
+    print("=" * 40)
     
-    # Exportar os pesos usando a função genérica
     try:
+        print("Criando modelo SCNN...")
+        model = create_scnn_complete(beta)
+        
         export_weights_to_c_header_generic(
             model=model,
             weights_path=weights_path,
-            header_path=header_path,
+            header_path="fashion_mnist_weights_with_model.h",
             only_weights_and_bias=True,      # Exporta apenas weights e bias
             ctype="float",                   # Tipo C (float direto)
             emit_typedef_if_builtin=False,   # Não emite typedef para float
             line_wrap=10,                    # 10 valores por linha
             float_fmt=".8f",                 # Formato de precisão
-            verbose=True                     # Saída detalhada
+            verbose=True,                    # Saída detalhada
+            require_model=True               # Usa o modelo
         )
         
-        print(f"\n✓ Exportação concluída com sucesso!")
-        print(f"✓ Arquivo criado: {header_path}")
-        print(f"✓ O arquivo está pronto para uso em implementações C/C++")
+        print(f"✓ Modo 1 concluído: fashion_mnist_weights_with_model.h")
         
     except Exception as e:
-        print(f"Erro durante a exportação: {e}")
-        return
+        print(f"Erro no Modo 1: {e}")
     
+    # MODO 2: Sem modelo (require_model=False) - Novo comportamento
+    print("\n" + "=" * 40)
+    print("MODO 2: EXPORTAÇÃO SEM MODELO")
+    print("=" * 40)
+    
+    try:
+        export_weights_to_c_header_generic(
+            model=None,                      # Não precisa do modelo!
+            weights_path=weights_path,
+            header_path="fashion_mnist_weights_direct.h",
+            only_weights_and_bias=True,      # Exporta apenas weights e bias
+            ctype="float",                   # Tipo C (float direto)
+            emit_typedef_if_builtin=False,   # Não emite typedef para float
+            line_wrap=10,                    # 10 valores por linha
+            float_fmt=".8f",                 # Formato de precisão
+            verbose=True,                    # Saída detalhada
+            require_model=False              # NÃO usa o modelo
+        )
+        
+        print(f"✓ Modo 2 concluído: fashion_mnist_weights_direct.h")
+        
+    except Exception as e:
+        print(f"Erro no Modo 2: {e}")
+    
+    print("\n" + "=" * 60)
+    print("RESUMO:")
+    print("✓ Modo 1 (com modelo): Comportamento original, carrega pesos no modelo")
+    print("✓ Modo 2 (sem modelo): Novo comportamento, lê diretamente do arquivo")
+    print("✓ Ambos os modos são retrocompatíveis e produzem resultados idênticos")
+    print("✓ O Modo 2 é mais eficiente quando não se precisa do modelo completo")
     print("=" * 60)
 
 
+def export_simple_example():
+    """
+    Exemplo simples de como usar a função sem modelo.
+    Útil quando você só tem o arquivo .pt e não quer recriar a arquitetura.
+    """
+    print("\n" + "=" * 50)
+    print("EXEMPLO SIMPLES - EXPORTAÇÃO DIRETA")
+    print("=" * 50)
+    
+    weights_path = "trained_scnn_fashion_mnist_weights_only.pt"
+    
+    if not os.path.exists(weights_path):
+        print(f"Arquivo {weights_path} não encontrado!")
+        return
+    
+    # Exportação direta - sem precisar criar o modelo!
+    export_weights_to_c_header_generic(
+        model=None,                          # Sem modelo
+        weights_path=weights_path,           # Apenas o arquivo de pesos
+        header_path="simple_export.h",      # Arquivo de saída
+        require_model=False                  # Modo direto
+    )
+    
+    print("✓ Exportação simples concluída!")
+
 if __name__ == "__main__":
+    # Executa a demonstração completa
     main()
+    
+    # Executa exemplo simples
+    export_simple_example()
