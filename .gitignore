@@ -1,0 +1,10 @@
+# Ignore the dados folder and all its contents
+dados/
+
+# Ignore all .pt files (PyTorch model files)
+*.pt
+
+# Ignore all .txt files
+*.txt
+
+improved_scnn_v2.py

@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Generic Weight Exporter for Fashion-MNIST SCNN
-Uses a generic function to export trained PyTorch model weights to C header format.
-"""
-
 import os
 import re
 import torch
@@ -173,6 +167,7 @@ def create_scnn_complete(beta):
     """
     Recria a arquitetura da SCNN para carregamento dos pesos.
     Deve ser idêntica à função do arquivo original.
+    Para extrair os pesos de um arquivo ".pt" sem o modelo, defina require_model = False?
     """
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     spike_grad = surrogate.fast_sigmoid(slope=25)
@@ -207,17 +202,9 @@ def create_scnn_complete(beta):
 
 
 def main():
-    """
-    Função principal para exportar os pesos do modelo Fashion-MNIST SCNN.
-    Demonstra ambos os modos: com modelo (require_model=True) e sem modelo (require_model=False).
-    """
-    print("=" * 60)
-    print("EXPORTADOR GENÉRICO DE PESOS - FASHION-MNIST SCNN")
-    print("=" * 60)
-    
     # Parâmetros do modelo (devem corresponder aos usados no treinamento)
     beta = 0.7
-    weights_path = "trained_scnn_fashion_mnist_weights_only.pt"
+    weights_path = "weights_input.pt"
     
     # Verificar se o arquivo de pesos existe
     if not os.path.exists(weights_path):
@@ -261,9 +248,9 @@ def main():
     
     try:
         export_weights_to_c_header_generic(
-            model=None,                      # Não precisa do modelo!
+            model=None,                      # Sem modelo
             weights_path=weights_path,
-            header_path="fashion_mnist_weights_direct.h",
+            header_path="weights_output.h",
             only_weights_and_bias=True,      # Exporta apenas weights e bias
             ctype="float",                   # Tipo C (float direto)
             emit_typedef_if_builtin=False,   # Não emite typedef para float
@@ -272,49 +259,19 @@ def main():
             verbose=True,                    # Saída detalhada
             require_model=False              # NÃO usa o modelo
         )
+        export_weights_to_c_header_generic(
+        model=None,                          # Sem modelo
+        weights_path=weights_path,           # Apenas o arquivo de pesos
+        header_path="simple_export.h",      # Arquivo de saída
+        require_model=False                  # Modo direto
+    )
         
         print(f"✓ Modo 2 concluído: fashion_mnist_weights_direct.h")
         
     except Exception as e:
         print(f"Erro no Modo 2: {e}")
     
-    print("\n" + "=" * 60)
-    print("RESUMO:")
-    print("✓ Modo 1 (com modelo): Comportamento original, carrega pesos no modelo")
-    print("✓ Modo 2 (sem modelo): Novo comportamento, lê diretamente do arquivo")
-    print("✓ Ambos os modos são retrocompatíveis e produzem resultados idênticos")
-    print("✓ O Modo 2 é mais eficiente quando não se precisa do modelo completo")
-    print("=" * 60)
-
-
-def export_simple_example():
-    """
-    Exemplo simples de como usar a função sem modelo.
-    Útil quando você só tem o arquivo .pt e não quer recriar a arquitetura.
-    """
-    print("\n" + "=" * 50)
-    print("EXEMPLO SIMPLES - EXPORTAÇÃO DIRETA")
-    print("=" * 50)
-    
-    weights_path = "trained_scnn_fashion_mnist_weights_only.pt"
-    
-    if not os.path.exists(weights_path):
-        print(f"Arquivo {weights_path} não encontrado!")
-        return
-    
-    # Exportação direta - sem precisar criar o modelo!
-    export_weights_to_c_header_generic(
-        model=None,                          # Sem modelo
-        weights_path=weights_path,           # Apenas o arquivo de pesos
-        header_path="simple_export.h",      # Arquivo de saída
-        require_model=False                  # Modo direto
-    )
-    
-    print("✓ Exportação simples concluída!")
 
 if __name__ == "__main__":
     # Executa a demonstração completa
     main()
-    
-    # Executa exemplo simples
-    export_simple_example()
