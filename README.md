@@ -71,9 +71,10 @@ export_simple_example()
 ## Generated C Header Features
 
 ### Automatic Structure Detection
-- **1D tensors (bias)** → `float array[size]`
-- **2D tensors (Linear weights)** → `float array[rows][cols]`
-- **4D tensors (Conv2d weights)** → `float array[size]` (flattened)
+- **1D tensors (bias)** → `float array[size]` - Exported as simple 1D arrays
+- **2D tensors (Linear weights)** → `float array[rows][cols]` - Preserved matrix structure for easy access
+- **4D tensors (Conv2d weights)** → `float array[out_ch][in_ch][kernel_h][kernel_w]` - **NEW**: Full 4D structure for direct indexing
+- **Other dimensions** → `float array[size]` - Flattened for compatibility
 
 ### Metadata Generation
 ```c
