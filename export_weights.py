@@ -71,7 +71,11 @@ def export_weights_to_c_header_generic(
 
     def sanitize(k: str) -> str:
         # "layer1.0.conv1.weight" -> "layer1_0_conv1_weight"
-        return re.sub(r"[^A-Za-z0-9_]", "_", k.replace(".", "_"))
+        sanitized = re.sub(r"[^A-Za-z0-9_]", "_", k.replace(".", "_"))
+        # Se começar com dígito, adiciona prefixo "layer_"
+        if sanitized and sanitized[0].isdigit():
+            sanitized = "layer_" + sanitized
+        return sanitized
 
     def should_keep(key: str) -> bool:
         if not only_weights_and_bias:
@@ -146,6 +150,39 @@ def export_weights_to_c_header_generic(
                     else:
                         f.write("\n")
                 f.write("};\n\n")
+            elif rank == 4:
+                # Caso especial para Conv2d: [out_channels, in_channels, kernel_h, kernel_w]
+                out_ch, in_ch, kh, kw = dims
+                f.write(f"{ctype} {name}[{out_ch}][{in_ch}][{kh}][{kw}] = {{\n")
+                fmt = "{:" + float_fmt + "}"
+                
+                for out_idx in range(out_ch):
+                    f.write("  {\n")
+                    for in_idx in range(in_ch):
+                        f.write("    {\n")
+                        for h_idx in range(kh):
+                            f.write("      {")
+                            for w_idx in range(kw):
+                                val = t[out_idx, in_idx, h_idx, w_idx].item()
+                                f.write(fmt.format(val))
+                                if w_idx != kw - 1:
+                                    f.write(",")
+                            f.write("}")
+                            if h_idx != kh - 1:
+                                f.write(",\n")
+                            else:
+                                f.write("\n")
+                        f.write("    }")
+                        if in_idx != in_ch - 1:
+                            f.write(",\n")
+                        else:
+                            f.write("\n")
+                    f.write("  }")
+                    if out_idx != out_ch - 1:
+                        f.write(",\n")
+                    else:
+                        f.write("\n")
+                f.write("};\n\n")
             else:
                 n = t.numel()
                 vals = as_list_str(t)
@@ -204,7 +241,7 @@ def create_scnn_complete(beta):
 def main():
     # Parâmetros do modelo (devem corresponder aos usados no treinamento)
     beta = 0.7
-    weights_path = "weights_input.pt"
+    weights_path = "weight_input.pt"
     
     # Verificar se o arquivo de pesos existe
     if not os.path.exists(weights_path):
